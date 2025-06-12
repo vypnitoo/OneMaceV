@@ -1,0 +1,24 @@
+name: Onemacev
+version: 1.0
+main: com.vypnito.onemacev.Onemacev
+api-version: 1.21
+author: vypnito
+description: Prevents Mace crafting after the first one is made, with autocrafter blocking.
+commands:
+  onemacev:
+    description: Main command for Onemacev plugin.
+    usage: /onemacev <info|reload|reset>
+    aliases: [maceblock, onemace]
+permissions:
+  onemacev.info:
+    description: Allows checking plugin info.
+    default: true
+  onemacev.reload:
+    description: Allows reloading plugin configuration.
+    default: op
+  onemacev.reset:
+    description: Allows resetting the Mace crafted status.
+    default: op
+  onemacev.bypass:
+    description: Allows players to bypass Mace crafting restrictions.
+    default: op
