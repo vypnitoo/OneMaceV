@@ -1,3 +1,60 @@
-# This is the default configuration file for the Onemacev plugin.
-# If a Mace has been crafted, this value will change to 'true'.
-mace_already_crafted: false
+settings:
+  limited_item: "MACE"
+  banned_ingredients:
+    - "HEAVY_CORE"
+    - "BREEZE_ROD"
+
+gui:
+  title: "&1Onemacev Status"
+  item_status:
+    crafted:
+      name: "&cItem Status: CRAFTED"
+      lore:
+        - "&7The limited item has already been"
+        - "&7crafted on this server."
+        - ""
+        - "&eCrafter: &a%crafter%"
+        - "&eDate: &b%date%"
+    not_crafted:
+      name: "&aItem Status: NOT CRAFTED"
+      lore:
+        - "&7The limited item has not been"
+        - "&7crafted yet. Be the first!"
+  reset_button:
+    name: "&c&lRESET STATUS"
+    lore:
+      - "&7Click to reset the crafting status."
+      - "&c&lWARNING: &cThis cannot be undone!"
+  reload_button:
+    name: "&e&lRELOAD CONFIG"
+    lore:
+      - "&7Click to reload the config.yml file."
+
+effects:
+  first_craft_firework: true
+  first_craft_global_sound:
+    enabled: true
+    sound: "UI_TOAST_CHALLENGE_COMPLETE"
+    volume: 1.0
+    pitch: 1.2
+
+messages:
+  # All messages support classic '&' color codes.
+  first_craft_announcement: "&6&lCONGRATULATIONS! &a<player> &6has just crafted the FIRST &e<item>&6!"
+  crafting_disabled_announcement: "&cAll further crafting of the <item> is now disabled!"
+  crafting_forbidden: "&cThis item has already been crafted. Further crafting is forbidden!"
+  ingredient_forbidden: "&cYou cannot place &e<ingredient>&c here. Crafting of the &e<item>&c is forbidden!"
+  item_removed_on_pickup: "&cThe <item> appeared on the ground and was removed!"
+  command_reload_success: "&aOnemacev plugin configuration has been reloaded."
+  command_reset_success: "&aThe crafting status for the <item> has been reset. It can now be crafted again."
+  command_no_permission: "&cYou do not have permission to use this command."
+  command_info_header: "&6--- Onemacev Plugin Info ---"
+  command_info_crafted_status: "&eHas the <item> been crafted? %status%"
+  command_info_version: "&7Version: <version>"
+  command_info_status_yes: "&cYES"
+  command_info_status_no: "&aNO"
+  command_who_header: "&6--- First Craft Information ---"
+  command_who_not_crafted_yet: "&cThe first <item> has not been crafted yet."
+  command_who_crafter: "&eCrafted by: &a<player>"
+  command_who_date: "&eCrafted on: &b<date>"
+  update_available: "&aA new version of Onemacev is available: &e<new_version>&a! You are on &c<current_version>&a."

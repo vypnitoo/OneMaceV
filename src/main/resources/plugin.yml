@@ -1,24 +1,36 @@
 name: Onemacev
-version: 1.0
+version: '1.2'
 main: com.vypnito.onemacev.Onemacev
-api-version: 1.21
+api-version: '1.21'
 author: vypnito
-description: Prevents Mace crafting after the first one is made, with autocrafter blocking.
+description: A plugin to limit the crafting of a specific item to only once per server.
+softdepend: [PlaceholderAPI]
+
 commands:
   onemacev:
-    description: Main command for Onemacev plugin.
-    usage: /onemacev <info|reload|reset>
-    aliases: [maceblock, onemace]
+    description: Main command for the Onemacev plugin. Opens the management GUI.
+    usage: /onemacev [reload|reset|who]
+    aliases: [onecraft, maceblock]
+
 permissions:
+  onemacev.gui:
+    description: Allows opening the management GUI.
+    default: op
   onemacev.info:
-    description: Allows checking plugin info.
+    description: Allows checking the plugin's status.
+    default: true
+  onemacev.who:
+    description: Allows checking who crafted the first limited item.
     default: true
   onemacev.reload:
-    description: Allows reloading plugin configuration.
+    description: Allows reloading the plugin's configuration.
     default: op
   onemacev.reset:
-    description: Allows resetting the Mace crafted status.
+    description: Allows resetting the crafting status of the limited item.
     default: op
   onemacev.bypass:
-    description: Allows players to bypass Mace crafting restrictions.
+    description: Allows players to bypass all crafting restrictions.
+    default: op
+  onemacev.notify.update:
+    description: Notifies the player about available updates upon joining.
     default: op

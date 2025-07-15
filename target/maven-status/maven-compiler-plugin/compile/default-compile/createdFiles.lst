@@ -1,2 +1,6 @@
+com\vypnito\onemacev\OnemacevExpansion.class
+com\vypnito\onemacev\GUIListener.class
 com\vypnito\onemacev\Onemacev.class
 com\vypnito\onemacev\MaceCraftListener.class
+com\vypnito\onemacev\DatabaseManager.class
+com\vypnito\onemacev\OnemacevTabCompleter.class

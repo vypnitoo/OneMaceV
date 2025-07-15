@@ -1,147 +1,289 @@
 package com.vypnito.onemacev;
 
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Material;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
+import java.net.URL;
+import java.net.URLConnection;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.sql.SQLException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Objects;
+import java.util.logging.Level;
 
-public final class Onemacev extends JavaPlugin implements CommandExecutor {
+public final class Onemacev extends JavaPlugin implements CommandExecutor, Listener {
 
-	private boolean maceAlreadyCrafted = false;
-
-	private String firstMaceAnnouncement;
-	private String disabledMaceRecipesMessage;
-	private String forbiddenMaceCraftMessage;
-	private String forbiddenIngredientMessage;
-	private String maceRemovedMessage;
-	private String defaultMaceSound;
-	private float defaultMaceSoundVolume;
-	private float defaultMaceSoundPitch;
+	private DatabaseManager databaseManager;
+	private boolean itemAlreadyCrafted;
+	private String firstCrafterName;
+	private long firstCraftTimestamp;
+	private Material limitedItemMaterial;
 	private List<String> bannedIngredients;
+	private String limitedItemName;
+	private boolean updateAvailable = false;
+	private String latestVersion = "";
 
 	@Override
 	public void onEnable() {
-		getLogger().info("Onemacev plugin is enabling!");
-
+		getLogger().info("Onemacev is enabling!");
 		saveDefaultConfig();
-		loadPluginConfiguration(); // Load custom configuration
+		loadPluginConfiguration();
+
+		databaseManager = new DatabaseManager(this);
+		try {
+			databaseManager.connect();
+			databaseManager.createTable();
+			databaseManager.loadStatus();
+		} catch (SQLException e) {
+			getLogger().log(Level.SEVERE, "DATABASE ERROR! Disabling plugin.", e);
+			getServer().getPluginManager().disablePlugin(this);
+			return;
+		}
 
 		getServer().getPluginManager().registerEvents(new MaceCraftListener(this), this);
+		getServer().getPluginManager().registerEvents(new GUIListener(this), this);
+		getServer().getPluginManager().registerEvents(this, this);
 
 		Objects.requireNonNull(getCommand("onemacev")).setExecutor(this);
+		Objects.requireNonNull(getCommand("onemacev")).setTabCompleter(new OnemacevTabCompleter());
 
-		if (maceAlreadyCrafted) {
-			getLogger().info("Mace has been crafted before. Further crafting is disabled.");
-		} else {
-			getLogger().info("Mace has NOT been crafted yet. First craft is allowed.");
+		if (getServer().getPluginManager().isPluginEnabled("PlaceholderAPI")) {
+			new OnemacevExpansion(this).register();
+			getLogger().info("Successfully hooked into PlaceholderAPI!");
 		}
+		checkForUpdates();
 	}
 
 	@Override
 	public void onDisable() {
-		getLogger().info("Onemacev plugin is disabling!");
-		saveMaceCraftedState();
+		databaseManager.closeConnection();
+		getLogger().info("Onemacev has been disabled.");
 	}
 
 	public void loadPluginConfiguration() {
+		this.reloadConfig();
 		FileConfiguration config = getConfig();
+		try {
+			limitedItemMaterial = Material.valueOf(config.getString("settings.limited_item", "MACE").toUpperCase());
+			limitedItemName = limitedItemMaterial.name().replace("_", " ").toLowerCase();
+		} catch (IllegalArgumentException e) {
+			getLogger().severe("Invalid material in 'settings.limited_item'. Defaulting to MACE.");
+			limitedItemMaterial = Material.MACE;
+			limitedItemName = "mace";
+		}
+		bannedIngredients = config.getStringList("settings.banned_ingredients");
+	}
 
-		this.maceAlreadyCrafted = config.getBoolean("mace_already_crafted", false);
-		this.firstMaceAnnouncement = config.getString("messages.first_mace_announcement", "<gold><bold>CONGRATULATIONS!</bold> <green><player></green><gold> has just crafted the FIRST MACE!</gold>");
-		this.disabledMaceRecipesMessage = config.getString("messages.disabled_mace_recipes", "<red>All further Mace crafting recipes are now disabled!</red>");
-		this.forbiddenMaceCraftMessage = config.getString("messages.forbidden_mace_craft", "<red>The Mace has already been crafted once. Further crafting is forbidden!</red>");
-		this.forbiddenIngredientMessage = config.getString("messages.forbidden_ingredient", "<red>You cannot place <item> here. Mace crafting is forbidden!</red>");
-		this.maceRemovedMessage = config.getString("messages.mace_removed", "<red>A Mace appeared and was removed. Crafting is forbidden!</red>");
+	public void setItemCrafted(boolean status, Player player) {
+		internalSetCraftedStatus(status);
+		if (status && player != null) {
+			internalSetCrafterName(player.getName());
+			internalSetTimestamp(System.currentTimeMillis());
+		} else {
+			internalSetCrafterName("N/A");
+			internalSetTimestamp(0);
+		}
+		databaseManager.saveStatus(this.itemAlreadyCrafted, this.firstCrafterName, this.firstCraftTimestamp);
+	}
 
-		this.defaultMaceSound = config.getString("sound.type", "ENTITY_PLAYER_LEVELUP");
-		this.defaultMaceSoundVolume = (float) config.getDouble("sound.volume", 1.0);
-		this.defaultMaceSoundPitch = (float) config.getDouble("sound.pitch", 1.0);
+	public void openStatusGUI(Player player) {
+		String title = formatString(getConfig().getString("gui.title"));
+		Inventory gui = Bukkit.createInventory(null, 27, title);
 
-		this.bannedIngredients = config.getStringList("banned_ingredients");
-		if (this.bannedIngredients == null || this.bannedIngredients.isEmpty()) {
-			this.bannedIngredients = List.of("HEAVY_CORE", "BREEZE_ROD");
+		ItemStack statusItem;
+		if (isItemAlreadyCrafted()) {
+			statusItem = new ItemStack(Material.RED_STAINED_GLASS_PANE);
+			ItemMeta meta = statusItem.getItemMeta();
+			meta.setDisplayName(formatString(getConfig().getString("gui.item_status.crafted.name")));
+			List<String> lore = new ArrayList<>();
+			for (String line : getConfig().getStringList("gui.item_status.crafted.lore")) {
+				line = line.replace("%crafter%", getFirstCrafterName());
+				line = line.replace("%date%", new SimpleDateFormat("yyyy-MM-dd").format(new Date(getFirstCraftTimestamp())));
+				lore.add(formatString(line));
+			}
+			meta.setLore(lore);
+			statusItem.setItemMeta(meta);
+		} else {
+			statusItem = new ItemStack(Material.LIME_STAINED_GLASS_PANE);
+			ItemMeta meta = statusItem.getItemMeta();
+			meta.setDisplayName(formatString(getConfig().getString("gui.item_status.not_crafted.name")));
+			meta.setLore(formatStringList(getConfig().getStringList("gui.item_status.not_crafted.lore")));
+			statusItem.setItemMeta(meta);
 		}
 
-		getLogger().info("Plugin configuration reloaded.");
+		ItemStack resetButton = new ItemStack(Material.BARRIER);
+		ItemMeta resetMeta = resetButton.getItemMeta();
+		resetMeta.setDisplayName(formatString(getConfig().getString("gui.reset_button.name")));
+		resetMeta.setLore(formatStringList(getConfig().getStringList("gui.reset_button.lore")));
+		resetButton.setItemMeta(resetMeta);
+
+		ItemStack reloadButton = new ItemStack(Material.KNOWLEDGE_BOOK);
+		ItemMeta reloadMeta = reloadButton.getItemMeta();
+		reloadMeta.setDisplayName(formatString(getConfig().getString("gui.reload_button.name")));
+		reloadMeta.setLore(formatStringList(getConfig().getStringList("gui.reload_button.lore")));
+		reloadButton.setItemMeta(reloadMeta);
+
+		gui.setItem(11, statusItem);
+		gui.setItem(14, resetButton);
+		gui.setItem(15, reloadButton);
+
+		player.openInventory(gui);
 	}
 
-	public boolean hasMaceAlreadyBeenCrafted() {
-		return maceAlreadyCrafted;
+	public String formatString(String text) {
+		return ChatColor.translateAlternateColorCodes('&', text);
 	}
 
-	public void setMaceAlreadyCrafted(boolean status) {
-		this.maceAlreadyCrafted = status;
-		saveMaceCraftedState();
+	public List<String> formatStringList(List<String> list) {
+		List<String> formatted = new ArrayList<>();
+		for (String s : list) {
+			formatted.add(formatString(s));
+		}
+		return formatted;
 	}
 
-	private void saveMaceCraftedState() {
-		FileConfiguration config = getConfig();
-		config.set("mace_already_crafted", maceAlreadyCrafted);
-		saveConfig();
-		getLogger().info("'mace_already_crafted' state saved: " + maceAlreadyCrafted);
+	public Component formatMessage(String configPath, String... placeholders) {
+		String message = getConfig().getString("messages." + configPath, "&cMissing message: " + configPath);
+		message = message.replace("<item>", this.limitedItemName);
+		if (placeholders != null) {
+			for (int i = 0; i < placeholders.length; i += 2) {
+				if (i + 1 < placeholders.length) {
+					message = message.replace(placeholders[i], placeholders[i + 1]);
+				}
+			}
+		}
+		return LegacyComponentSerializer.legacyAmpersand().deserialize(message);
 	}
 
 	public void sendGlobalAnnouncement(Component message) {
 		getServer().broadcast(message);
 	}
 
-	public String getFirstMaceAnnouncement() { return firstMaceAnnouncement; }
-	public String getDisabledMaceRecipesMessage() { return disabledMaceRecipesMessage; }
-	public String getForbiddenMaceCraftMessage() { return forbiddenMaceCraftMessage; }
-	public String getForbiddenIngredientMessage() { return forbiddenIngredientMessage; }
-	public String getMaceRemovedMessage() { return maceRemovedMessage; }
-	public String getDefaultMaceSound() { return defaultMaceSound; }
-	public float getDefaultMaceSoundVolume() { return defaultMaceSoundVolume; }
-	public float getDefaultMaceSoundPitch() { return defaultMaceSoundPitch; }
+	public boolean isItemAlreadyCrafted() { return itemAlreadyCrafted; }
+	public Material getLimitedItemMaterial() { return limitedItemMaterial; }
 	public List<String> getBannedIngredients() { return bannedIngredients; }
+	public String getFirstCrafterName() { return firstCrafterName; }
+	public long getFirstCraftTimestamp() { return firstCraftTimestamp; }
+	public String getLimitedItemName() { return limitedItemName; }
+	public void internalSetCraftedStatus(boolean status) { this.itemAlreadyCrafted = status; }
+	public void internalSetCrafterName(String name) { this.firstCrafterName = name; }
+	public void internalSetTimestamp(long time) { this.firstCraftTimestamp = time; }
 
 	@Override
 	public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-		if (!command.getName().equalsIgnoreCase("onemacev")) {
-			return false;
-		}
-
-		if (args.length == 1) {
-			if (args[0].equalsIgnoreCase("info")) {
-				if (sender.hasPermission("onemacev.info")) {
-					NamedTextColor statusColor = hasMaceAlreadyBeenCrafted() ? NamedTextColor.RED : NamedTextColor.GREEN;
-					String statusText = hasMaceAlreadyBeenCrafted() ? "YES" : "NO";
-
-					sender.sendMessage(Component.text("--- Onemacev Plugin Info ---", NamedTextColor.GOLD));
-					sender.sendMessage(Component.text("Has the Mace been crafted yet? ", NamedTextColor.YELLOW)
-							.append(Component.text(statusText, statusColor)));
-					sender.sendMessage(Component.text("Version: " + getDescription().getVersion(), NamedTextColor.GRAY));
+		if (args.length == 0) {
+			if (sender instanceof Player p) {
+				if (p.hasPermission("onemacev.gui")) {
+					openStatusGUI(p);
 				} else {
-					sender.sendMessage(Component.text("You don't have permission to view plugin info.", NamedTextColor.RED));
+					p.sendMessage(formatMessage("command_no_permission"));
 				}
 				return true;
-			} else if (args[0].equalsIgnoreCase("reload")) {
-				if (sender.hasPermission("onemacev.reload")) {
-					loadPluginConfiguration();
-					sender.sendMessage(Component.text("Onemacev configuration reloaded.", NamedTextColor.GREEN));
-				} else {
-					sender.sendMessage(Component.text("You don't have permission to reload the plugin.", NamedTextColor.RED));
-				}
-				return true;
-			} else if (args[0].equalsIgnoreCase("reset")) {
-				if (sender.hasPermission("onemacev.reset")) {
-					setMaceAlreadyCrafted(false);
-					sender.sendMessage(Component.text("Mace crafted status has been reset to false.", NamedTextColor.GREEN));
-					getLogger().info("Mace crafted status manually reset by " + sender.getName());
-				} else {
-					sender.sendMessage(Component.text("You don't have permission to reset the Mace status.", NamedTextColor.RED));
-				}
+			} else {
+				sender.sendMessage("This command can only be run by a player to open the GUI. Use /onemacev <subcommand> for console.");
 				return true;
 			}
 		}
 
-		sender.sendMessage(Component.text("Usage: /onemacev <info|reload|reset>", NamedTextColor.RED));
+		String subCommand = args[0].toLowerCase();
+		switch (subCommand) {
+			case "reload":
+				if (!sender.hasPermission("onemacev.reload")) {
+					sender.sendMessage(formatMessage("command_no_permission"));
+					return true;
+				}
+				loadPluginConfiguration();
+				sender.sendMessage(formatMessage("command_reload_success"));
+				return true;
+			case "reset":
+				if (!sender.hasPermission("onemacev.reset")) {
+					sender.sendMessage(formatMessage("command_no_permission"));
+					return true;
+				}
+				setItemCrafted(false, null);
+				sender.sendMessage(formatMessage("command_reset_success"));
+				getLogger().info("Limited item status has been manually reset by " + sender.getName());
+				return true;
+			case "who":
+				return true;
+			case "info":
+				return true;
+			default:
+				sender.sendMessage(Component.text("Usage: /onemacev or /onemacev <reload|reset|who|info>", net.kyori.adventure.text.format.NamedTextColor.RED));
+				return false;
+		}
+	}
+
+	private void checkForUpdates() {
+		Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+			try {
+				int resourceId = 125996;
+				URL url = new URL("https://api.spigotmc.org/legacy/update.php?resource=" + resourceId);
+				URLConnection connection = url.openConnection();
+				try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
+					String newVersion = reader.readLine();
+					String currentVersion = this.getDescription().getVersion();
+					if (isNewerVersionAvailable(currentVersion, newVersion)) {
+						this.latestVersion = newVersion;
+						this.updateAvailable = true;
+						getLogger().info("A new update is available: " + newVersion + " (You are running " + currentVersion + ")");
+					}
+				}
+			} catch (Exception e) {
+				getLogger().warning("Could not check for updates: " + e.getMessage());
+			}
+		});
+	}
+
+	private boolean isNewerVersionAvailable(String currentVersion, String onlineVersion) {
+		String current = currentVersion.replaceAll("[^0-9.]", "");
+		String online = onlineVersion.replaceAll("[^0-9.]", "");
+		if (current.equals(online)) return false;
+		try {
+			String[] currentParts = current.split("\\.");
+			String[] onlineParts = online.split("\\.");
+			int maxLength = Math.max(currentParts.length, onlineParts.length);
+			for (int i = 0; i < maxLength; i++) {
+				int currentPart = i < currentParts.length ? Integer.parseInt(currentParts[i]) : 0;
+				int onlinePart = i < onlineParts.length ? Integer.parseInt(onlineParts[i]) : 0;
+				if (onlinePart > currentPart) return true;
+				if (onlinePart < currentPart) return false;
+			}
+		} catch (NumberFormatException e) {
+			getLogger().warning("Could not compare versions: " + e.getMessage());
+			return false;
+		}
 		return false;
+	}
+
+	@EventHandler
+	public void onPlayerJoin(PlayerJoinEvent event) {
+		Player player = event.getPlayer();
+		if (player.hasPermission("onemacev.notify.update") && this.updateAvailable) {
+			Bukkit.getScheduler().runTaskLater(this, () -> {
+				player.sendMessage(formatMessage("update_available",
+						"<new_version>", this.latestVersion,
+						"<current_version>", this.getDescription().getVersion()));
+			}, 60L);
+		}
 	}
 }
